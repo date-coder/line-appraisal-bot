@@ -125,6 +125,14 @@ async function handleEvent(ev) {
     return;
   }
 
+// ★ まず“非テキスト”のガードを置く（追加）
+if (ev.type === "message" && ev.message.type !== "text") {
+  return client.replyMessage(ev.replyToken, {
+    type: "text",
+    text: "恐れ入ります、回答はテキストでお願いします。"
+  });
+}
+  
   // 3) message（本文）
   if (ev.type === "message" && ev.message.type === "text") {
     const t = ev.message.text.trim();
