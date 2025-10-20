@@ -155,18 +155,18 @@ if (ev.type === "message" && ev.message.type !== "text") {
   if (ev.type === "message" && ev.message.type === "text") {
     const t = ev.message.text.trim();
 
-      // リッチメニュー（テキスト送信）左ボタン：「名乗る」
-  if (t === "名乗る") {
+    // ★どの状態でも再スタートOK（最初に判定）
+    if (/^(売却査定|査定|新規査定|やり直し|もう一度査定)$/u.test(t)) {
+      return startFlow(userId, ev.replyToken);
+    }
+
+      // 2) ★ここに“名乗る”を置く（最優先で処理）
+  if (/^名乗る\s*$/u.test(t)) {                 // ← 完全一致（末尾の空白も許容）
     const name = (await getDisplayName(userId)) || "登録者";
     console.log("[NAME]", userId, "->", name);
     return client.replyMessage(ev.replyToken, { type: "text", text: `${name}です。` });
   }
 
-
-    // ★どの状態でも再スタートOK（最初に判定）
-    if (/^(売却査定|査定|新規査定|やり直し|もう一度査定)$/u.test(t)) {
-      return startFlow(userId, ev.replyToken);
-    }
 
     // EDITメニュー
     if (s.state === "EDIT_MENU") {
