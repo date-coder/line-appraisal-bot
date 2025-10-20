@@ -151,10 +151,16 @@ if (/^(売却査定|査定|新規査定|やり直し)$/u.test(text)) {
     }
     if (s.state === "ASK_ADDRESS_PREF") { s.answers.address = { pref: t }; s.state = "ASK_ADDRESS_CITY"; return say(ev.replyToken,"続いて【市区町村】を教えてください。（例：杉並区 / 横浜市鶴見区）"); }
     if (s.state === "ASK_ADDRESS_CITY")  { s.answers.address.city = t; s.state = "ASK_ADDRESS_STREET"; return say(ev.replyToken,"【町名・番地】をご入力ください。（例：阿佐谷南1-23-4）"); }
-    if (s.state === "ASK_ADDRESS_STREET"){ s.answers.address.street = t; 
-      if (s.answers.type==="マンション") { s.state = "ASK_APT_ROOM"; return say(ev.replyToken,"【建物名・部屋番号】（例：〇〇マンション 305号室）"); }
-      s.state = (s.answers.type==="戸建て")?"ASK_AREA_LAND":"ASK_AREA";
-      return say(ev.replyToken, s.state==="ASK_AREA"?"【面積】を半角数字で（㎡、例：65.34）":"まず【土地面積】を半角数字で（例：80.12）");
+if (s.state === "ASK_ADDRESS_STREET"){ 
+  s.answers.address.street = t; 
+  if (s.answers.type === "マンション") {
+    s.state = "ASK_APT_NAME";
+    return say(ev.replyToken, "【建物名】を教えてください。（例：〇〇マンション）");
+  }
+  s.state = (s.answers.type === "戸建て") ? "ASK_AREA_LAND" : "ASK_AREA";
+  return say(ev.replyToken, s.state==="ASK_AREA" ? "【面積】を半角数字で（㎡、例：65.34）" : "まず【土地面積】を半角数字で（例：80.12）");
+}
+
     }
     if (s.state === "ASK_APT_ROOM") { 
       const m = t.match(/(.+?)\s*(\d+[^\s]*)?$/);
