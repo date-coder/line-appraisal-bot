@@ -1,5 +1,5 @@
 import express from "express";
-import line from "@line/bot-sdk";                // ← default import
+import as line from "@line/bot-sdk";                // ← default import
 import { renderFlexConfirm } from "./lib/flexConfirm.js";
 
 const config = {
