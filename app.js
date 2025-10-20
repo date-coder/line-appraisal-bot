@@ -44,11 +44,8 @@ async function handleEvent(event) {
       ]);
     }
 
-    // Fallback echo (replace with your state machine)
-    return client.replyMessage(event.replyToken, {
-      type: "text",
-      text: `受信: ${text}`,
-    });
+// 何もしない（未定義メッセージはスルー）
+return Promise.resolve();
   }
 
   if (event.type === "postback") {
