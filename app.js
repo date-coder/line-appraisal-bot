@@ -1,15 +1,16 @@
 import express from "express";
-import line from "@line/bot-sdk";
+import line from "@line/bot-sdk";                // ← default import
 import { renderFlexConfirm } from "./lib/flexConfirm.js";
 
 const config = {
   channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.CHANNEL_SECRET,
 };
+
 const app = express();
 const client = new line.Client(config);
 
-// セッション（本番はRedis/Firestore）
+// セッション（本番はRedis/Firestoreへ）
 const SESS = new Map();
 
 // 共通ヘルパ
@@ -29,7 +30,7 @@ const reYear = /^(19\d{2}|20\d{2}|築\d{1,2}年)$/;
 const startFlow = async (userId, replyToken) => {
   SESS.set(userId, { state: "ASK_TYPE", answers: {} });
   await client.replyMessage(replyToken, [
-    { type: "text", text: "売却査定をはじめます。約3分・全16問です。途中保存されます。" },
+    { type: "text", text: "売却査定をはじめます。約3分・全16問前後です。途中保存されます。" },
     { type: "text", text: "まず、売却する物件の【種類】を教えてください。", quickReply: qr(["マンション","戸建て","土地","その他"]) }
   ]);
 };
@@ -48,7 +49,6 @@ const showConfirm = async (userId, replyToken) => {
 
 // 保存＆通知（必要ならオン）
 async function saveAndNotify(answers) {
-  // Googleシート（Apps Script WebアプリURLにPOST）
   if (process.env.SHEETS_WEBHOOK_URL) {
     await fetch(process.env.SHEETS_WEBHOOK_URL, {
       method: "POST",
@@ -56,7 +56,6 @@ async function saveAndNotify(answers) {
       body: JSON.stringify(answers),
     }).catch(console.error);
   }
-  // Slack
   if (process.env.SLACK_WEBHOOK_URL) {
     const msg = `新規査定：${answers.type}｜${answers.address?.city || ""}｜${answers.appraisal_method}｜${answers.name || ""}`;
     await fetch(process.env.SLACK_WEBHOOK_URL, {
@@ -67,7 +66,7 @@ async function saveAndNotify(answers) {
   }
 }
 
-// follow（友だち追加）時の歓迎
+// follow（友だち追加）時
 async function onFollow(ev) {
   return client.replyMessage(ev.replyToken, [
     { type: "text", text: "友だち追加ありがとうございます！営業電話はしません。" },
@@ -82,8 +81,13 @@ async function onFollow(ev) {
 
 // ---- Webhook本体 ----
 app.post("/webhook", line.middleware(config), async (req, res) => {
-  await Promise.all(req.body.events.map(handleEvent));
-  res.status(200).end();
+  try {
+    await Promise.all(req.body.events.map(handleEvent));
+    res.status(200).end();
+  } catch (e) {
+    console.error(e);
+    res.status(500).end();
+  }
 });
 
 // 状態遷移
@@ -105,11 +109,18 @@ async function handleEvent(ev) {
     if (s.state === "WAIT_CONFIRM" && data === "SUBMIT") {
       await saveAndNotify(s.answers);
       s.state = "DONE";
-      return say(ev.replyToken, "査定依頼を受け付けました。担当よりご連絡します。");
+      return client.replyMessage(ev.replyToken, [
+        { type: "text", text: "査定依頼を受け付けました。担当よりご連絡します。" },
+        { type: "text", text: "別の物件も査定しますか？",
+          quickReply: { items: [{ type:"action", action:{ type:"postback", label:"もう一度査定する", data:"START_APPRAISAL" }}] } }
+      ]);
     }
     if (s.state === "WAIT_CONFIRM" && data === "EDIT") {
       s.state = "EDIT_MENU";
-      return say(ev.replyToken, "修正したい項目をお選びください。", ["住所","面積","間取り","築年","現況","所有者","売却理由","査定方法","時期","連絡方法","氏名","連絡先","備考"]);
+      return say(ev.replyToken, "修正したい項目をお選びください。", [
+        "住所","建物名","部屋番号","面積","間取り","築年","現況",
+        "所有者","売却理由","査定方法","時期","連絡方法","氏名","連絡先","備考"
+      ]);
     }
     return;
   }
@@ -118,16 +129,16 @@ async function handleEvent(ev) {
   if (ev.type === "message" && ev.message.type === "text") {
     const t = ev.message.text.trim();
 
-// ★どの状態でも再スタートOK（このブロックは最上段に置く）
-if (/^(売却査定|査定|新規査定|やり直し|もう一度査定)$/u.test(t)) {
-  return startFlow(userId, ev.replyToken); // ← startFlow内でstate初期化
-}
+    // ★どの状態でも再スタートOK（最初に判定）
+    if (/^(売却査定|査定|新規査定|やり直し|もう一度査定)$/u.test(t)) {
+      return startFlow(userId, ev.replyToken);
+    }
 
-
-    // EDITメニューから戻す（超簡易）
+    // EDITメニュー
     if (s.state === "EDIT_MENU") {
-      // ここでは例として「住所」選択で都道府県からやり直し
       if (t === "住所") { s.state = "ASK_ADDRESS_PREF"; return say(ev.replyToken, "物件の【都道府県】を教えてください。（例：東京都）"); }
+      if (t === "建物名") { s.state = "ASK_APT_NAME"; return say(ev.replyToken, "【建物名】を教えてください。（例：〇〇マンション）"); }
+      if (t === "部屋番号") { s.state = "ASK_APT_ROOMNO"; return say(ev.replyToken, "【部屋番号】を入力してください。（例：305／305号室）"); }
       if (t === "面積") { s.state = s.answers.type==="戸建て" ? "ASK_AREA_LAND" : "ASK_AREA"; return say(ev.replyToken, s.answers.type==="戸建て"?"まず【土地面積】を半角数字で（例：80.12）":"【面積】を半角数字で（㎡、例：65.34）"); }
       if (t === "間取り") { s.state = "ASK_LAYOUT"; return say(ev.replyToken, "【間取り】を選んでください。", ["1R","1K","1DK","1LDK","2LDK","3LDK","4LDK以上","不明"]); }
       if (t === "築年") { s.state = "ASK_YEAR_BUILT"; return say(ev.replyToken, "（戸建ての場合のみ）【築年】または【築年数】（例：2003 / 築22年）"); }
@@ -140,7 +151,6 @@ if (/^(売却査定|査定|新規査定|やり直し|もう一度査定)$/u.test
       if (t === "氏名") { s.state = "ASK_NAME"; return say(ev.replyToken, "【お名前（フルネーム）】をご入力ください。"); }
       if (t === "連絡先") { s.state = s.answers.contact_method==="電話"?"ASK_PHONE":"ASK_EMAIL"; return say(ev.replyToken, s.state==="ASK_PHONE"?"【電話番号】（例：09012345678）":"【メールアドレス】（例：example@domain.jp）"); }
       if (t === "備考") { s.state = "ASK_NOTES"; return say(ev.replyToken, "【気になる点】があればご自由にご記入ください。"); }
-      // それ以外は確認画面に戻す
       s.state = "WAIT_CONFIRM"; return showConfirm(userId, ev.replyToken);
     }
 
@@ -151,42 +161,40 @@ if (/^(売却査定|査定|新規査定|やり直し|もう一度査定)$/u.test
     }
     if (s.state === "ASK_ADDRESS_PREF") { s.answers.address = { pref: t }; s.state = "ASK_ADDRESS_CITY"; return say(ev.replyToken,"続いて【市区町村】を教えてください。（例：杉並区 / 横浜市鶴見区）"); }
     if (s.state === "ASK_ADDRESS_CITY")  { s.answers.address.city = t; s.state = "ASK_ADDRESS_STREET"; return say(ev.replyToken,"【町名・番地】をご入力ください。（例：阿佐谷南1-23-4）"); }
-if (s.state === "ASK_ADDRESS_STREET"){ 
-  s.answers.address.street = t; 
-  if (s.answers.type === "マンション") {
-    s.state = "ASK_APT_NAME";
-    return say(ev.replyToken, "【建物名】を教えてください。（例：〇〇マンション）");
-  }
-  s.state = (s.answers.type === "戸建て") ? "ASK_AREA_LAND" : "ASK_AREA";
-  return say(ev.replyToken, s.state==="ASK_AREA" ? "【面積】を半角数字で（㎡、例：65.34）" : "まず【土地面積】を半角数字で（例：80.12）");
-}
+    if (s.state === "ASK_ADDRESS_STREET"){ 
+      s.answers.address.street = t; 
+      if (s.answers.type === "マンション") {
+        s.state = "ASK_APT_NAME";
+        return say(ev.replyToken, "【建物名】を教えてください。（例：〇〇マンション）");
+      }
+      s.state = (s.answers.type === "戸建て") ? "ASK_AREA_LAND" : "ASK_AREA";
+      return say(ev.replyToken, s.state==="ASK_AREA" ? "【面積】を半角数字で（㎡、例：65.34）" : "まず【土地面積】を半角数字で（例：80.12）");
+    }
 
-// （マンション）建物名
-if (s.state === "ASK_APT_NAME") {
-  // うっかり「〇〇マンション 305号室」と一行で来たら自動分割
-  const m = t.match(/^(.+?)\s*([0-9A-Za-z\-]+(?:号室)?)?$/u);
-  s.answers.apartment_name = (m?.[1] || t).trim();
+    // （マンション）建物名
+    if (s.state === "ASK_APT_NAME") {
+      // うっかり「〇〇マンション 305号室」と一行で来たら自動分割
+      const m = t.match(/^(.+?)\s*([0-9A-Za-z\-]+(?:号室)?)?$/u);
+      s.answers.apartment_name = (m?.[1] || t).trim();
 
-  if (m?.[2]) {
-    s.answers.room_no = m[2].replace(/\s+/g, "");
-    s.state = "ASK_AREA";
-    return say(ev.replyToken, "【専有面積】を半角数字で（㎡、例：65.34）");
-  }
-  s.state = "ASK_APT_ROOMNO";
-  return say(ev.replyToken, "【部屋番号】を入力してください。（例：305／305号室）");
-}
+      if (m?.[2]) {
+        s.answers.room_no = m[2].replace(/\s+/g, "");
+        s.state = "ASK_AREA";
+        return say(ev.replyToken, "【専有面積】を半角数字で（㎡、例：65.34）");
+      }
+      s.state = "ASK_APT_ROOMNO";
+      return say(ev.replyToken, "【部屋番号】を入力してください。（例：305／305号室）");
+    }
 
-// （マンション）部屋番号
-if (s.state === "ASK_APT_ROOMNO") {
-  const room = t.replace(/\s+/g, "");
-  const ok = /^[0-9A-Za-z\-]+(号室)?$/u.test(room); // 305, 1201, 3-12, 305号室 など許容
-  if (!ok) return say(ev.replyToken, "部屋番号の形式でお願いします。（例：305／305号室）");
-  s.answers.room_no = room;
-  s.state = "ASK_AREA";
-  return say(ev.replyToken, "【専有面積】を半角数字で（㎡、例：65.34）");
-}
-
-    
+    // （マンション）部屋番号
+    if (s.state === "ASK_APT_ROOMNO") {
+      const room = t.replace(/\s+/g, "");
+      const ok = /^[0-9A-Za-z\-]+(号室)?$/u.test(room); // 305, 1201, 3-12, 305号室 など
+      if (!ok) return say(ev.replyToken, "部屋番号の形式でお願いします。（例：305／305号室）");
+      s.answers.room_no = room;
+      s.state = "ASK_AREA";
+      return say(ev.replyToken, "【専有面積】を半角数字で（㎡、例：65.34）");
+    }
 
     if (s.state === "ASK_AREA") {
       if (!reNum.test(t)) return say(ev.replyToken,"うまく受け取れませんでした。例：65.34（㎡）",null);
@@ -270,13 +278,15 @@ if (s.state === "ASK_APT_ROOMNO") {
       return showConfirm(userId, ev.replyToken);
     }
 
-    // フォールバック：未定義発話は軽く受ける or 無視
+    // フォールバック
     if (/^(ありがとう|ありがとうございます|感謝|サンキュー)$/u.test(t))
       return say(ev.replyToken, "こちらこそ、ありがとうございます！");
     return Promise.resolve();
   }
 }
 
+// ヘルスチェック
+app.get("/", (_, res) => res.send("OK"));
+
 const port = process.env.PORT || 3000;
-app.get("/", (_,res)=>res.send("OK"));
 app.listen(port, () => console.log(`Listening on ${port}`));
