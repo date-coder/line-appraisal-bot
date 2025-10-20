@@ -1,5 +1,5 @@
 import express from "express";
-import { Client, middleware } from "@line/bot-sdk";
+import line from "@line/bot-sdk";
 import { renderFlexConfirm } from "./lib/flexConfirm.js";
 
 const config = {
@@ -7,7 +7,7 @@ const config = {
   channelSecret: process.env.CHANNEL_SECRET,
 };
 const app = express();
-const client = new Client(config);
+const client = new line.Client(config);
 
 // セッション（本番はRedis/Firestore）
 const SESS = new Map();
@@ -81,7 +81,7 @@ async function onFollow(ev) {
 }
 
 // ---- Webhook本体 ----
-app.post("/webhook", middleware(config), async (req, res) => {
+app.post("/webhook", line.middleware(config), async (req, res) => {
   await Promise.all(req.body.events.map(handleEvent));
   res.status(200).end();
 });
@@ -118,9 +118,9 @@ async function handleEvent(ev) {
   if (ev.type === "message" && ev.message.type === "text") {
     const t = ev.message.text.trim();
 
-// 起動キーワード（いつでも再スタートOK）
-if (/^(売却査定|査定|新規査定|やり直し)$/u.test(text)) {
-  return startFlow(userId, ev.replyToken);
+// ★どの状態でも再スタートOK（このブロックは最上段に置く）
+if (/^(売却査定|査定|新規査定|やり直し|もう一度査定)$/u.test(t)) {
+  return startFlow(userId, ev.replyToken); // ← startFlow内でstate初期化
 }
 
 
@@ -161,12 +161,33 @@ if (s.state === "ASK_ADDRESS_STREET"){
   return say(ev.replyToken, s.state==="ASK_AREA" ? "【面積】を半角数字で（㎡、例：65.34）" : "まず【土地面積】を半角数字で（例：80.12）");
 }
 
-    }
-    if (s.state === "ASK_APT_ROOM") { 
-      const m = t.match(/(.+?)\s*(\d+[^\s]*)?$/);
-      s.answers.apartment_name = m?.[1] || t; s.answers.room_no = m?.[2] || "";
-      s.state = "ASK_AREA"; return say(ev.replyToken,"【専有面積】を半角数字で（㎡、例：65.34）");
-    }
+// （マンション）建物名
+if (s.state === "ASK_APT_NAME") {
+  // うっかり「〇〇マンション 305号室」と一行で来たら自動分割
+  const m = t.match(/^(.+?)\s*([0-9A-Za-z\-]+(?:号室)?)?$/u);
+  s.answers.apartment_name = (m?.[1] || t).trim();
+
+  if (m?.[2]) {
+    s.answers.room_no = m[2].replace(/\s+/g, "");
+    s.state = "ASK_AREA";
+    return say(ev.replyToken, "【専有面積】を半角数字で（㎡、例：65.34）");
+  }
+  s.state = "ASK_APT_ROOMNO";
+  return say(ev.replyToken, "【部屋番号】を入力してください。（例：305／305号室）");
+}
+
+// （マンション）部屋番号
+if (s.state === "ASK_APT_ROOMNO") {
+  const room = t.replace(/\s+/g, "");
+  const ok = /^[0-9A-Za-z\-]+(号室)?$/u.test(room); // 305, 1201, 3-12, 305号室 など許容
+  if (!ok) return say(ev.replyToken, "部屋番号の形式でお願いします。（例：305／305号室）");
+  s.answers.room_no = room;
+  s.state = "ASK_AREA";
+  return say(ev.replyToken, "【専有面積】を半角数字で（㎡、例：65.34）");
+}
+
+    
+
     if (s.state === "ASK_AREA") {
       if (!reNum.test(t)) return say(ev.replyToken,"うまく受け取れませんでした。例：65.34（㎡）",null);
       if (s.answers.type==="マンション") { s.answers.area = { exclusive: t }; }
