@@ -66,6 +66,18 @@ async function saveAndNotify(answers) {
   }
 }
 
+// --- 追加：プロフィール名を取るヘルパー ---
+async function getDisplayName(userId) {
+  try {
+    const prof = await client.getProfile(userId);   // 1:1トークなら取得可
+    return prof?.displayName || "";
+  } catch (e) {
+    console.error("[PROFILE] getProfile failed:", e);
+    return "";
+  }
+}
+
+
 // follow（友だち追加）時
 async function onFollow(ev) {
   return client.replyMessage(ev.replyToken, [
@@ -105,6 +117,12 @@ async function handleEvent(ev) {
   // 2) postback
   if (ev.type === "postback") {
     const data = ev.postback?.data || "";
+
+     if (data === "SHOW_NAME") {
+    const name = (await getDisplayName(userId)) || "登録者";
+    return client.replyMessage(ev.replyToken, { type: "text", text: `${name}です。` });
+  }
+   
     if (data === "START_APPRAISAL") return startFlow(userId, ev.replyToken);
     if (s.state === "WAIT_CONFIRM" && data === "SUBMIT") {
       await saveAndNotify(s.answers);
@@ -136,6 +154,14 @@ if (ev.type === "message" && ev.message.type !== "text") {
   // 3) message（本文）
   if (ev.type === "message" && ev.message.type === "text") {
     const t = ev.message.text.trim();
+
+      // リッチメニュー（テキスト送信）左ボタン：「名乗る」
+  if (t === "名乗る") {
+    const name = (await getDisplayName(userId)) || "登録者";
+    console.log("[NAME]", userId, "->", name);
+    return client.replyMessage(ev.replyToken, { type: "text", text: `${name}です。` });
+  }
+
 
     // ★どの状態でも再スタートOK（最初に判定）
     if (/^(売却査定|査定|新規査定|やり直し|もう一度査定)$/u.test(t)) {
