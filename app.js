@@ -118,8 +118,11 @@ async function handleEvent(ev) {
   if (ev.type === "message" && ev.message.type === "text") {
     const t = ev.message.text.trim();
 
-    // 起動キーワード
-    if (s.state === "INIT" && /^(売却査定|査定)$/u.test(t)) return startFlow(userId, ev.replyToken);
+// 起動キーワード（いつでも再スタートOK）
+if (/^(売却査定|査定|新規査定|やり直し)$/u.test(text)) {
+  return startFlow(userId, ev.replyToken);
+}
+
 
     // EDITメニューから戻す（超簡易）
     if (s.state === "EDIT_MENU") {
