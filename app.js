@@ -92,24 +92,36 @@ async function onFollow(ev) {
 }
 
 // ---- Webhook本体 ----
-// Verify の空POSTにも 200 を返し、例外で落ちないように防御
-app.post("/webhook", line.middleware(config), async (req, res) => {
-  try {
-    const events = Array.isArray(req.body?.events) ? req.body.events : [];
-
-    // LINE Developers の「Verify」などは events が空なので 200 を返す
-    if (events.length === 0) {
+// Verify（署名なし・eventsなし）でも 200 を返すように防御
+app.post(
+  "/webhook",
+  // ① 先に署名ヘッダーがあるか見る。無ければ即200を返して終了
+  (req, res, next) => {
+    const sig = req.get("x-line-signature");
+    if (!sig) {
       return res.status(200).send("OK");
     }
-
-    await Promise.all(events.map(handleEvent));
-    return res.sendStatus(200);
-  } catch (e) {
-    console.error("[WEBHOOK ERROR]", e?.stack || e);
-    // Verify を通すため 500 にせず 200 で握りつぶす
-    return res.sendStatus(200);
+    // 署名がある通常のWebhookだけ、LINEのミドルウェアに通す
+    return line.middleware(config)(req, res, next);
+  },
+  // ② ここから通常処理
+  async (req, res) => {
+    try {
+      const events = Array.isArray(req.body?.events) ? req.body.events : [];
+      if (events.length === 0) {
+        // 念のため、空eventsでも200
+        return res.sendStatus(200);
+      }
+      await Promise.all(events.map(handleEvent));
+      return res.sendStatus(200);
+    } catch (e) {
+      console.error("[WEBHOOK ERROR]", e?.stack || e);
+      // Verifyで落ちないよう 200 を返す
+      return res.sendStatus(200);
+    }
   }
-});
+);
+
 
 
 // 状態遷移
