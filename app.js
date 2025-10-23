@@ -92,15 +92,25 @@ async function onFollow(ev) {
 }
 
 // ---- Webhook本体 ----
+// Verify の空POSTにも 200 を返し、例外で落ちないように防御
 app.post("/webhook", line.middleware(config), async (req, res) => {
   try {
-    await Promise.all(req.body.events.map(handleEvent));
-    res.status(200).end();
+    const events = Array.isArray(req.body?.events) ? req.body.events : [];
+
+    // LINE Developers の「Verify」などは events が空なので 200 を返す
+    if (events.length === 0) {
+      return res.status(200).send("OK");
+    }
+
+    await Promise.all(events.map(handleEvent));
+    return res.sendStatus(200);
   } catch (e) {
-    console.error(e);
-    res.status(500).end();
+    console.error("[WEBHOOK ERROR]", e?.stack || e);
+    // Verify を通すため 500 にせず 200 で握りつぶす
+    return res.sendStatus(200);
   }
 });
+
 
 // 状態遷移
 async function handleEvent(ev) {
